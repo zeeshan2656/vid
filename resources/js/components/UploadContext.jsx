@@ -193,7 +193,9 @@ export const UploadProvider = ({ children }) => {
     // ── Call the server-side FFmpeg / DB creation endpoint ─────────────
     const callProcessEndpoint = async (id, item) => {
         try {
-            const response = await axios.post(`/api/admin/uploads/${item.id}/process`);
+            const response = await axios.post(`/api/admin/uploads/${item.id}/process`, null, {
+                timeout: 0 // Prevent timeouts during potentially long-running FFmpeg process
+            });
 
             const resultModel = response.data.video || response.data.reel;
             updateQueueItem(id, {
@@ -240,6 +242,7 @@ export const UploadProvider = ({ children }) => {
 
         let retryCount = 0;
         let chunkIndex = currentItem.chunkIndex || 0;
+        let uploadedChunks = [];
         const totalChunks = currentItem.totalChunks;
 
         sessionStartTime.current  = Date.now();
@@ -268,6 +271,9 @@ export const UploadProvider = ({ children }) => {
                     setActiveUpload(null);
                     return;
                 }
+                if (statusRes.data.uploaded_chunks) {
+                    uploadedChunks = statusRes.data.uploaded_chunks.map(Number);
+                }
                 if (typeof statusRes.data.next_chunk === 'number') {
                     chunkIndex = statusRes.data.next_chunk;
                     sessionStartBytes.current = chunkIndex * CHUNK_SIZE;
@@ -280,6 +286,29 @@ export const UploadProvider = ({ children }) => {
             while (chunkIndex < totalChunks) {
                 const controller = abortControllers.current.get(id);
                 if (controller?.signal.aborted) break;
+
+                // Skip this chunk if it has already been successfully uploaded to the server
+                if (uploadedChunks.includes(chunkIndex)) {
+                    console.log(`Chunk ${chunkIndex} already uploaded, skipping.`);
+                    chunkIndex++;
+                    const skippedBytes = Math.min(currentItem.file.size, chunkIndex * CHUNK_SIZE);
+                    const percent = Math.min(99, Math.round((skippedBytes * 100) / currentItem.totalBytes));
+
+                    updateQueueItem(id, { progress: percent, uploadedBytes: skippedBytes });
+
+                    // Keep IndexedDB progress state in sync
+                    const live = queueRef.current.find(i => i.id === id);
+                    if (live) {
+                        saveToDB({
+                            ...live,
+                            chunkIndex,
+                            uploadedBytes: skippedBytes,
+                            progress: percent,
+                            file: null,
+                        });
+                    }
+                    continue;
+                }
 
                 const start     = chunkIndex * CHUNK_SIZE;
                 const end       = Math.min(currentItem.file.size, start + CHUNK_SIZE);
@@ -302,6 +331,7 @@ export const UploadProvider = ({ children }) => {
                     const response = await axios.post('/api/admin/uploads/chunk', formData, {
                         signal: newController.signal,
                         headers: { 'Content-Type': 'multipart/form-data' },
+                        timeout: 0, // Ensure no timeout limit on the client side
                         onUploadProgress: (progressEvent) => {
                             const chunkUploaded       = progressEvent.loaded;
                             const currentTotalUploaded = start + chunkUploaded;
@@ -347,14 +377,22 @@ export const UploadProvider = ({ children }) => {
                     if (axios.isCancel(err) || err.name === 'CanceledError' || newController.signal.aborted) {
                         break;
                     }
-                    console.error(`Chunk ${chunkIndex} error:`, err);
+                    
+                    const responseError = err.response?.data?.error || err.response?.data?.message || err.message;
+                    console.error(`Chunk ${chunkIndex} error:`, {
+                        message: err.message,
+                        status: err.response?.status,
+                        statusText: err.response?.statusText,
+                        body: err.response?.data,
+                    });
+
                     retryCount++;
                     if (retryCount <= 3) {
                         await new Promise(r => setTimeout(r, 2000 * retryCount));
                         sessionStartTime.current  = Date.now();
                         sessionStartBytes.current = chunkIndex * CHUNK_SIZE;
                     } else {
-                        throw new Error(err.response?.data?.error || 'Upload failed after 3 retries.');
+                        throw new Error(responseError || 'Upload failed after 3 retries.');
                     }
                 }
             }

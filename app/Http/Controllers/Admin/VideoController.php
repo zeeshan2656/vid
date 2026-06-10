@@ -37,16 +37,22 @@ class VideoController extends Controller
      */
     public function getChunkStatus(Request $request)
     {
+        $this->logServerLimits();
+
         $request->validate([
             'file_id' => 'required|string',
             'filename' => 'required|string',
         ]);
 
         $uploadUuid = $request->input('file_id');
+        $filename = $request->input('filename');
+
+        Log::info("Upload status query: ID={$uploadUuid}, Filename={$filename}");
 
         $upload = Upload::where('upload_uuid', $uploadUuid)->first();
 
         if (!$upload) {
+            Log::info("Upload status query response: New upload session. ID={$uploadUuid}");
             return response()->json([
                 'uploaded_chunks' => [],
                 'next_chunk' => 0,
@@ -61,6 +67,8 @@ class VideoController extends Controller
         while (in_array($nextChunk, $uploadedChunks)) {
             $nextChunk++;
         }
+
+        Log::info("Upload status query response: ID={$uploadUuid}, Status={$upload->status}, Chunks Uploaded=" . count($uploadedChunks) . ", Next Chunk={$nextChunk}");
 
         return response()->json([
             'uploaded_chunks' => $uploadedChunks,
@@ -131,6 +139,11 @@ class VideoController extends Controller
         $title = $request->input('title');
         $description = $request->input('description');
 
+        // Log server limits on the first chunk start
+        if ($chunkIndex === 0) {
+            $this->logServerLimits();
+        }
+
         // Find or create the upload session
         $upload = Upload::firstOrCreate(
             ['upload_uuid' => $uploadUuid],
@@ -145,8 +158,13 @@ class VideoController extends Controller
             ]
         );
 
+        if ($upload->wasRecentlyCreated) {
+            Log::info("Upload Started: ID={$uploadUuid}, Filename={$filename}, Total Chunks={$totalChunks}");
+        }
+
         // Duplicate prevention: if already published, reject
         if ($upload->status === 'published') {
+            Log::info("Upload chunk rejected: already published. ID={$uploadUuid}, Chunk={$chunkIndex}");
             return response()->json([
                 'status' => 'already_published',
                 'message' => 'This upload has already been processed.',
@@ -156,6 +174,7 @@ class VideoController extends Controller
 
         // Reject cancelled uploads
         if ($upload->status === 'cancelled') {
+            Log::info("Upload chunk rejected: session cancelled. ID={$uploadUuid}, Chunk={$chunkIndex}");
             return response()->json([
                 'status' => 'cancelled',
                 'message' => 'This upload has been cancelled.',
@@ -164,7 +183,15 @@ class VideoController extends Controller
 
         // Save the chunk file
         $file = $request->file('file');
-        $file->storeAs("tmp/{$uploadUuid}", "chunk_{$chunkIndex}", 'local');
+        $chunkPath = "tmp/{$uploadUuid}/chunk_{$chunkIndex}";
+        
+        // Skip writing the file if the chunk is already on disk
+        if (Storage::disk('local')->exists($chunkPath)) {
+            Log::info("Chunk file already on disk (skipping write): ID={$uploadUuid}, Chunk={$chunkIndex}");
+        } else {
+            $file->storeAs("tmp/{$uploadUuid}", "chunk_{$chunkIndex}", 'local');
+            Log::info("Chunk Saved: ID={$uploadUuid}, Filename={$filename}, Chunk Number={$chunkIndex}, Chunk Size=" . $file->getSize() . " bytes, Total Chunks={$totalChunks}");
+        }
 
         // Update the uploaded_chunks list
         $chunks = $upload->uploaded_chunks ?? [];
@@ -181,11 +208,14 @@ class VideoController extends Controller
         if ($allChunksUploaded) {
             // Idempotency: if merge already happened, skip
             if ($upload->final_path) {
+                Log::info("All chunks uploaded, merge already completed: ID={$uploadUuid}, Final Path={$upload->final_path}");
                 return response()->json([
                     'status' => 'uploaded',
                     'upload_uuid' => $uploadUuid,
                 ], 200);
             }
+
+            Log::info("Chunk Merge Started: ID={$uploadUuid}, Filename={$filename}");
 
             // Merge chunks into the final file
             $originalName = pathinfo($filename, PATHINFO_FILENAME);
@@ -199,12 +229,20 @@ class VideoController extends Controller
             $out = fopen($destinationPath, 'wb');
             if (!$out) {
                 $upload->update(['status' => 'failed']);
+                Log::error("Upload Failed: ID={$uploadUuid}, Filename={$filename}, Chunk Number={$chunkIndex}, Reason=Failed to open destination file for merging");
                 return response()->json(['error' => 'Failed to open destination file for merging'], 500);
             }
 
             for ($i = 0; $i < $totalChunks; $i++) {
-                $chunkPath = Storage::disk('local')->path("tmp/{$uploadUuid}/chunk_{$i}");
-                $in = fopen($chunkPath, 'rb');
+                $chunkFile = "tmp/{$uploadUuid}/chunk_{$i}";
+                $absoluteChunkPath = Storage::disk('local')->path($chunkFile);
+                if (!Storage::disk('local')->exists($chunkFile)) {
+                    fclose($out);
+                    $upload->update(['status' => 'failed']);
+                    Log::error("Upload Failed: ID={$uploadUuid}, Filename={$filename}, Chunk Number={$chunkIndex}, Reason=Chunk {$i} missing during merge");
+                    return response()->json(['error' => "Failed to read chunk {$i} for merging - file missing"], 500);
+                }
+                $in = fopen($absoluteChunkPath, 'rb');
                 if ($in) {
                     while ($buff = fread($in, 4096)) {
                         fwrite($out, $buff);
@@ -213,6 +251,7 @@ class VideoController extends Controller
                 } else {
                     fclose($out);
                     $upload->update(['status' => 'failed']);
+                    Log::error("Upload Failed: ID={$uploadUuid}, Filename={$filename}, Chunk Number={$chunkIndex}, Reason=Failed to open chunk {$i} for reading during merge");
                     return response()->json(['error' => "Failed to read chunk {$i} for merging"], 500);
                 }
             }
@@ -226,6 +265,8 @@ class VideoController extends Controller
                 'final_path' => "{$folder}/{$cleanFileName}",
                 'status' => 'uploaded',
             ]);
+
+            Log::info("Chunk Merge Completed: ID={$uploadUuid}, Filename={$filename}, Path={$destinationPath}");
 
             return response()->json([
                 'status' => 'uploaded',
@@ -254,11 +295,13 @@ class VideoController extends Controller
         $upload = Upload::where('upload_uuid', $uploadUuid)->first();
 
         if (!$upload) {
+            Log::error("Upload processing failed: Session not found for ID={$uploadUuid}");
             return response()->json(['error' => 'Upload session not found'], 404);
         }
 
         // Idempotent: if already published, return existing model
         if ($upload->status === 'published' && $upload->model_id) {
+            Log::info("Upload processing: already published. ID={$uploadUuid}, Model ID={$upload->model_id}");
             if ($upload->file_type === 'reel') {
                 $model = Reel::find($upload->model_id);
                 return response()->json([
@@ -278,6 +321,7 @@ class VideoController extends Controller
         }
 
         if ($upload->status !== 'uploaded') {
+            Log::error("Upload processing failed: upload not ready. ID={$uploadUuid}, Status={$upload->status}");
             return response()->json([
                 'error' => 'Upload is not ready for processing',
                 'current_status' => $upload->status,
@@ -286,12 +330,15 @@ class VideoController extends Controller
 
         // Mark as processing
         $upload->update(['status' => 'processing']);
+        Log::info("Processing Started: ID={$uploadUuid}, Filename={$upload->file_name}");
 
         try {
             $absolutePath = Storage::disk('public')->path($upload->final_path);
 
             // Extract metadata
+            Log::info("FFmpeg Started: Extracting metadata for ID={$uploadUuid}");
             $metadata = $this->videoService->getMetadata($absolutePath);
+            Log::info("FFmpeg Completed: Metadata extracted for ID={$uploadUuid}, Duration={$metadata['duration']} seconds, Resolution={$metadata['resolution']}");
 
             $defaultTitle = $upload->title ?: self::formatTitleFromFilename($upload->file_name);
 
@@ -306,12 +353,17 @@ class VideoController extends Controller
                     'status' => 'published',
                     'published_at' => now(),
                 ]);
+                Log::info("Database Saved: Video model created for ID={$uploadUuid}, Video ID={$model->id}");
 
                 // Generate single WebP thumbnail directly in the permanent location
                 try {
+                    Log::info("Thumbnail generation started for Video ID={$model->id}");
                     $thumbnailUrl = $this->videoService->generateSingleThumbnail($absolutePath, $metadata['duration'], $model->id);
                     if ($thumbnailUrl) {
                         $model->update(['thumbnail_path' => $thumbnailUrl]);
+                        Log::info("Thumbnail generation completed for Video ID={$model->id}, Path={$thumbnailUrl}");
+                    } else {
+                        Log::warning("Thumbnail generation returned empty path for Video ID={$model->id}");
                     }
                 } catch (\Exception $e) {
                     Log::error("Failed to generate initial thumbnail for video {$model->id}: " . $e->getMessage());
@@ -321,6 +373,7 @@ class VideoController extends Controller
                     'status' => 'published',
                     'model_id' => $model->id,
                 ]);
+                Log::info("Upload Published: ID={$uploadUuid}, Video ID={$model->id}, Title={$model->title}");
 
                 $this->clearVideoCache();
 
@@ -344,11 +397,13 @@ class VideoController extends Controller
                     'status' => 'published',
                     'published_at' => now(),
                 ]);
+                Log::info("Database Saved: Reel model created for ID={$uploadUuid}, Reel ID={$model->id}");
 
                 $upload->update([
                     'status' => 'published',
                     'model_id' => $model->id,
                 ]);
+                Log::info("Upload Published: ID={$uploadUuid}, Reel ID={$model->id}, Title={$model->title}");
 
                 Cache::forget("reels_stream_list");
                 Cache::forget("reels_stream_list_v2");
@@ -360,7 +415,9 @@ class VideoController extends Controller
                 ], 201);
             }
         } catch (\Exception $e) {
-            Log::error("Upload processing failed for {$uploadUuid}: " . $e->getMessage());
+            Log::error("Upload processing failed for ID={$uploadUuid}: " . $e->getMessage(), [
+                'exception' => $e
+            ]);
             $upload->update(['status' => 'failed']);
 
             return response()->json([
@@ -593,6 +650,29 @@ class VideoController extends Controller
         }
 
         return response()->json(['success' => false, 'message' => 'No prefix or directory name provided']);
+    }
+
+    private function logServerLimits(): void
+    {
+        try {
+            $freeSpace = @disk_free_space(storage_path());
+            $freeSpaceStr = $freeSpace !== false ? number_format($freeSpace / 1048576, 2) . ' MB' : 'unknown';
+        } catch (\Exception $e) {
+            $freeSpaceStr = 'error: ' . $e->getMessage();
+        }
+
+        $limits = [
+            'php_version' => PHP_VERSION,
+            'upload_max_filesize' => ini_get('upload_max_filesize'),
+            'post_max_size' => ini_get('post_max_size'),
+            'memory_limit' => ini_get('memory_limit'),
+            'max_execution_time' => ini_get('max_execution_time'),
+            'max_input_time' => ini_get('max_input_time'),
+            'max_file_uploads' => ini_get('max_file_uploads'),
+            'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'unknown',
+            'disk_free_space' => $freeSpaceStr,
+        ];
+        Log::info('Server limits detected:', $limits);
     }
 
     private function clearVideoCache(): void
