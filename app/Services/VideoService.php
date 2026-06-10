@@ -18,6 +18,26 @@ class VideoService
     }
 
     /**
+     * Check if shell_exec is enabled and callable on the server
+     */
+    public function isShellEnabled(): bool
+    {
+        if (!function_exists('shell_exec')) {
+            return false;
+        }
+
+        $disabledFunctions = ini_get('disable_functions');
+        if ($disabledFunctions) {
+            $disabled = array_map('trim', explode(',', strtolower($disabledFunctions)));
+            if (in_array('shell_exec', $disabled)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Get video metadata (duration & resolution)
      */
     public function getMetadata(string $filePath): array
@@ -27,51 +47,55 @@ class VideoService
         $orientation = 'portrait';
 
         try {
-            // Get duration
-            $durationCmd = sprintf(
-                '"%s" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "%s"',
-                $this->ffprobe,
-                $filePath
-            );
-            $durationOutput = shell_exec($durationCmd);
-            if ($durationOutput !== null) {
-                $duration = (float) trim($durationOutput);
-            }
-
-            // Get resolution
-            $resCmd = sprintf(
-                '"%s" -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "%s"',
-                $this->ffprobe,
-                $filePath
-            );
-            $resOutput = shell_exec($resCmd);
-            if ($resOutput !== null) {
-                $resolution = trim($resOutput);
-            }
-
-            // Get rotation to check if width/height need to be swapped
-            $rotation = 0;
-            $rotateCmd = sprintf(
-                '"%s" -v error -select_streams v:0 -show_entries stream_tags=rotate -of default=noprint_wrappers=1:nokey=1 "%s"',
-                $this->ffprobe,
-                $filePath
-            );
-            $rotateOutput = shell_exec($rotateCmd);
-            if ($rotateOutput !== null && trim($rotateOutput) !== '') {
-                $rotation = (int) trim($rotateOutput);
-            }
-
-            if ($rotation === 0) {
-                // Check side data rotation
-                $sideCmd = sprintf(
-                    '"%s" -v error -select_streams v:0 -show_entries stream_side_data=rotation -of default=noprint_wrappers=1:nokey=1 "%s"',
+            if ($this->isShellEnabled()) {
+                // Get duration
+                $durationCmd = sprintf(
+                    '"%s" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "%s"',
                     $this->ffprobe,
                     $filePath
                 );
-                $sideOutput = shell_exec($sideCmd);
-                if ($sideOutput !== null && trim($sideOutput) !== '') {
-                    $rotation = (int) trim($sideOutput);
+                $durationOutput = \shell_exec($durationCmd);
+                if ($durationOutput !== null) {
+                    $duration = (float) trim($durationOutput);
                 }
+
+                // Get resolution
+                $resCmd = sprintf(
+                    '"%s" -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "%s"',
+                    $this->ffprobe,
+                    $filePath
+                );
+                $resOutput = \shell_exec($resCmd);
+                if ($resOutput !== null) {
+                    $resolution = trim($resOutput);
+                }
+
+                // Get rotation to check if width/height need to be swapped
+                $rotation = 0;
+                $rotateCmd = sprintf(
+                    '"%s" -v error -select_streams v:0 -show_entries stream_tags=rotate -of default=noprint_wrappers=1:nokey=1 "%s"',
+                    $this->ffprobe,
+                    $filePath
+                );
+                $rotateOutput = \shell_exec($rotateCmd);
+                if ($rotateOutput !== null && trim($rotateOutput) !== '') {
+                    $rotation = (int) trim($rotateOutput);
+                }
+
+                if ($rotation === 0) {
+                    // Check side data rotation
+                    $sideCmd = sprintf(
+                        '"%s" -v error -select_streams v:0 -show_entries stream_side_data=rotation -of default=noprint_wrappers=1:nokey=1 "%s"',
+                        $this->ffprobe,
+                        $filePath
+                    );
+                    $sideOutput = \shell_exec($sideCmd);
+                    if ($sideOutput !== null && trim($sideOutput) !== '') {
+                        $rotation = (int) trim($sideOutput);
+                    }
+                }
+            } else {
+                Log::warning("shell_exec is disabled on the server. Skipping video metadata extraction.");
             }
 
             if ($resolution !== 'Unknown') {
@@ -96,7 +120,7 @@ class VideoService
                     }
                 }
             }
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             Log::error("Failed to parse video metadata: " . $e->getMessage());
         }
 
@@ -123,28 +147,36 @@ class VideoService
         // Ensure storage directory exists
         Storage::disk('public')->makeDirectory('temp-thumbnails');
         
-        foreach ($marks as $index => $percentage) {
-            $time = $duration * $percentage;
-            $thumbName = "{$prefix}_{$index}_" . time() . ".jpg";
-            $relativePath = "temp-thumbnails/{$thumbName}";
-            $absoluteOutputPath = Storage::disk('public')->path($relativePath);
+        if ($this->isShellEnabled()) {
+            foreach ($marks as $index => $percentage) {
+                $time = $duration * $percentage;
+                $thumbName = "{$prefix}_{$index}_" . time() . ".jpg";
+                $relativePath = "temp-thumbnails/{$thumbName}";
+                $absoluteOutputPath = Storage::disk('public')->path($relativePath);
 
-            // FFmpeg command to capture frame
-            $cmd = sprintf(
-                '"%s" -y -ss %f -i "%s" -vframes 1 -f image2 "%s" 2>&1',
-                $this->ffmpeg,
-                $time,
-                $videoPath,
-                $absoluteOutputPath
-            );
+                // FFmpeg command to capture frame
+                $cmd = sprintf(
+                    '"%s" -y -ss %f -i "%s" -vframes 1 -f image2 "%s" 2>&1',
+                    $this->ffmpeg,
+                    $time,
+                    $videoPath,
+                    $absoluteOutputPath
+                );
 
-            $output = shell_exec($cmd);
-            
-            if (Storage::disk('public')->exists($relativePath)) {
-                $thumbnails[] = Storage::url($relativePath);
-            } else {
-                Log::error("FFmpeg failed to generate thumbnail at {$time}s. Command: {$cmd}. Output: " . $output);
+                try {
+                    $output = \shell_exec($cmd);
+                    
+                    if (Storage::disk('public')->exists($relativePath)) {
+                        $thumbnails[] = Storage::url($relativePath);
+                    } else {
+                        Log::error("FFmpeg failed to generate thumbnail at {$time}s. Command: {$cmd}. Output: " . $output);
+                    }
+                } catch (\Throwable $e) {
+                    Log::error("shell_exec failed during thumbnail generation: " . $e->getMessage());
+                }
             }
+        } else {
+            Log::warning("shell_exec is disabled on the server. Skipping bulk thumbnail generation.");
         }
 
         return $thumbnails;
@@ -178,17 +210,27 @@ class VideoService
             $absoluteTempJpg
         );
 
-        $output = shell_exec($cmd);
+        if ($this->isShellEnabled()) {
+            try {
+                $output = \shell_exec($cmd);
 
-        if (Storage::disk('public')->exists($tempJpgRelative)) {
-            // Convert to WebP
-            $success = $this->convertToWebP($absoluteTempJpg, $absolutePermanentPath);
-            // Delete temp jpg file
-            Storage::disk('public')->delete($tempJpgRelative);
-            
-            return Storage::url($permanentRelativePath);
+                if (Storage::disk('public')->exists($tempJpgRelative)) {
+                    // Convert to WebP
+                    $success = $this->convertToWebP($absoluteTempJpg, $absolutePermanentPath);
+                    // Delete temp jpg file
+                    Storage::disk('public')->delete($tempJpgRelative);
+                    
+                    return Storage::url($permanentRelativePath);
+                } else {
+                    Log::error("FFmpeg failed to generate single thumbnail at {$time}s. Command: {$cmd}. Output: " . $output);
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                Log::error("shell_exec failed during single thumbnail generation: " . $e->getMessage());
+                return null;
+            }
         } else {
-            Log::error("FFmpeg failed to generate single thumbnail at {$time}s. Command: {$cmd}. Output: " . $output);
+            Log::warning("shell_exec is disabled on the server. Skipping single thumbnail generation.");
             return null;
         }
     }

@@ -77,6 +77,95 @@ Route::get('/clear-cache', function () {
     }
 });
 
+Route::get('/check-storage', function () {
+    $result = [];
+    $publicStorage = public_path('storage');
+    $targetStorage = storage_path('app/public');
+    
+    $result['public_storage_path'] = $publicStorage;
+    $result['public_storage_exists'] = file_exists($publicStorage);
+    $result['public_storage_is_link'] = is_link($publicStorage);
+    $result['public_storage_is_dir'] = is_dir($publicStorage);
+    
+    $result['target_storage_path'] = $targetStorage;
+    $result['target_storage_exists'] = file_exists($targetStorage);
+    $result['target_storage_is_dir'] = is_dir($targetStorage);
+    
+    $reelsDir = $targetStorage . '/reels';
+    $result['reels_dir_exists'] = file_exists($reelsDir);
+    if (is_dir($reelsDir)) {
+        $result['reels_files'] = array_slice(scandir($reelsDir), 0, 20);
+    }
+    
+    if ($result['public_storage_exists']) {
+        if (!$result['public_storage_is_link']) {
+            $result['action_needed'] = 'public/storage is a real directory, not a link. It needs to be deleted or renamed, then storage:link run.';
+        } else {
+            $linkTarget = @readlink($publicStorage);
+            $result['link_target'] = $linkTarget;
+            if ($linkTarget && !file_exists($linkTarget)) {
+                $result['action_needed'] = 'public/storage is a broken link pointing to a non-existent path: ' . $linkTarget;
+            } else {
+                $result['action_needed'] = 'Link seems correct and target exists.';
+            }
+        }
+    } else {
+        $result['action_needed'] = 'public/storage does not exist. Run /fix-storage.';
+    }
+    
+    return response()->json($result);
+});
+
+Route::get('/fix-storage', function () {
+    $publicStorage = public_path('storage');
+    $targetStorage = storage_path('app/public');
+    $log = [];
+    
+    if (file_exists($publicStorage)) {
+        if (is_link($publicStorage)) {
+            $log[] = 'Found existing symlink. Deleting it...';
+            if (@unlink($publicStorage)) {
+                $log[] = 'Successfully deleted existing symlink.';
+            } else {
+                $log[] = 'Failed to delete existing symlink.';
+            }
+        } elseif (is_dir($publicStorage)) {
+            $log[] = 'Found existing directory instead of symlink. Renaming it to storage_old...';
+            $backupPath = public_path('storage_old_' . time());
+            if (@rename($publicStorage, $backupPath)) {
+                $log[] = 'Successfully renamed directory to ' . basename($backupPath);
+            } else {
+                $log[] = 'Failed to rename directory.';
+            }
+        } else {
+            $log[] = 'Found unknown file type. Deleting it...';
+            if (@unlink($publicStorage)) {
+                $log[] = 'Successfully deleted unknown file.';
+            } else {
+                $log[] = 'Failed to delete unknown file.';
+            }
+        }
+    }
+    
+    try {
+        \Illuminate\Support\Facades\Artisan::call('storage:link');
+        $log[] = 'Artisan storage:link output: ' . \Illuminate\Support\Facades\Artisan::output();
+    } catch (\Exception $e) {
+        $log[] = 'Artisan storage:link error: ' . $e->getMessage();
+    }
+    
+    if (!file_exists($publicStorage)) {
+        $log[] = 'Symlink still missing. Trying native PHP symlink()...';
+        if (@symlink($targetStorage, $publicStorage)) {
+            $log[] = 'Native symlink() created successfully.';
+        } else {
+            $log[] = 'Native symlink() failed.';
+        }
+    }
+    
+    return response()->json($log);
+});
+
 Route::get('/', function () {
     return view('welcome');
 });
