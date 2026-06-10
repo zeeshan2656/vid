@@ -61,7 +61,7 @@ Route::get('/run-migrations', function () {
     try {
         \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
         return 'Migrations run successfully:<br><pre>' . \Illuminate\Support\Facades\Artisan::output() . '</pre>';
-    } catch (\Exception $e) {
+    } catch (\Throwable $e) {
         return 'Error running migrations: ' . $e->getMessage();
     }
 });
@@ -72,7 +72,7 @@ Route::get('/clear-cache', function () {
         \Illuminate\Support\Facades\Artisan::call('cache:clear');
         \Illuminate\Support\Facades\Artisan::call('view:clear');
         return 'Cache cleared successfully!';
-    } catch (\Exception $e) {
+    } catch (\Throwable $e) {
         return 'Error clearing cache: ' . $e->getMessage();
     }
 });
@@ -91,23 +91,25 @@ Route::get('/check-storage', function () {
     $result['target_storage_exists'] = file_exists($targetStorage);
     $result['target_storage_is_dir'] = is_dir($targetStorage);
     
-    $reelsDir = $targetStorage . '/reels';
-    $result['reels_dir_exists'] = file_exists($reelsDir);
+    // Check reels under public/storage/reels
+    $reelsDir = $publicStorage . '/reels';
+    $result['public_reels_dir_exists'] = file_exists($reelsDir);
     if (is_dir($reelsDir)) {
-        $result['reels_files'] = array_slice(scandir($reelsDir), 0, 20);
+        $result['public_reels_files'] = array_slice(scandir($reelsDir), 0, 20);
+    }
+    
+    // Check reels under storage/app/public/reels (for debugging)
+    $targetReelsDir = $targetStorage . '/reels';
+    $result['private_reels_dir_exists'] = file_exists($targetReelsDir);
+    if (is_dir($targetReelsDir)) {
+        $result['private_reels_files'] = array_slice(scandir($targetReelsDir), 0, 20);
     }
     
     if ($result['public_storage_exists']) {
         if (!$result['public_storage_is_link']) {
-            $result['action_needed'] = 'public/storage is a real directory, not a link. It needs to be deleted or renamed, then storage:link run.';
+            $result['action_needed'] = 'public/storage is a real directory (which is correct for Hostinger workaround!).';
         } else {
-            $linkTarget = @readlink($publicStorage);
-            $result['link_target'] = $linkTarget;
-            if ($linkTarget && !file_exists($linkTarget)) {
-                $result['action_needed'] = 'public/storage is a broken link pointing to a non-existent path: ' . $linkTarget;
-            } else {
-                $result['action_needed'] = 'Link seems correct and target exists.';
-            }
+            $result['action_needed'] = 'public/storage is still a symbolic link. Run /fix-storage to convert it to a real directory.';
         }
     } else {
         $result['action_needed'] = 'public/storage does not exist. Run /fix-storage.';
@@ -121,24 +123,19 @@ Route::get('/fix-storage', function () {
     $targetStorage = storage_path('app/public');
     $log = [];
     
-    if (file_exists($publicStorage)) {
+    // 1. Delete any existing symlink or file at public/storage
+    if (is_link($publicStorage) || file_exists($publicStorage)) {
         if (is_link($publicStorage)) {
-            $log[] = 'Found existing symlink. Deleting it...';
+            $log[] = 'Found existing symlink at public/storage. Deleting it...';
             if (@unlink($publicStorage)) {
                 $log[] = 'Successfully deleted existing symlink.';
             } else {
                 $log[] = 'Failed to delete existing symlink.';
             }
         } elseif (is_dir($publicStorage)) {
-            $log[] = 'Found existing directory instead of symlink. Renaming it to storage_old...';
-            $backupPath = public_path('storage_old_' . time());
-            if (@rename($publicStorage, $backupPath)) {
-                $log[] = 'Successfully renamed directory to ' . basename($backupPath);
-            } else {
-                $log[] = 'Failed to rename directory.';
-            }
+            $log[] = 'public/storage is already a real directory. Keeping it.';
         } else {
-            $log[] = 'Found unknown file type. Deleting it...';
+            $log[] = 'Found unknown file type at public/storage. Deleting it...';
             if (@unlink($publicStorage)) {
                 $log[] = 'Successfully deleted unknown file.';
             } else {
@@ -147,23 +144,78 @@ Route::get('/fix-storage', function () {
         }
     }
     
-    try {
-        \Illuminate\Support\Facades\Artisan::call('storage:link');
-        $log[] = 'Artisan storage:link output: ' . \Illuminate\Support\Facades\Artisan::output();
-    } catch (\Exception $e) {
-        $log[] = 'Artisan storage:link error: ' . $e->getMessage();
-    }
-    
+    // 2. Create public/storage as a real directory if it doesn't exist
     if (!file_exists($publicStorage)) {
-        $log[] = 'Symlink still missing. Trying native PHP symlink()...';
-        if (@symlink($targetStorage, $publicStorage)) {
-            $log[] = 'Native symlink() created successfully.';
+        $log[] = 'Creating public/storage as a real physical directory...';
+        if (@mkdir($publicStorage, 0755, true)) {
+            $log[] = 'Successfully created public/storage directory!';
         } else {
-            $log[] = 'Native symlink() failed.';
+            $log[] = 'Failed to create public/storage directory.';
         }
     }
     
+    // 3. Copy files from storage/app/public to public/storage recursively
+    $log[] = 'Copying existing assets from storage/app/public to public/storage...';
+    $copyDir = function($srcDir, $destDir) use (&$copyDir, &$log) {
+        $dir = @opendir($srcDir);
+        if (!$dir) return;
+        @mkdir($destDir, 0755, true);
+        while (($file = readdir($dir)) !== false) {
+            if ($file === '.' || $file === '..') continue;
+            $srcFile = $srcDir . '/' . $file;
+            $destFile = $destDir . '/' . $file;
+            if (is_dir($srcFile)) {
+                $copyDir($srcFile, $destFile);
+            } else {
+                if (@copy($srcFile, $destFile)) {
+                    $log[] = "Copied file: " . basename($srcFile);
+                } else {
+                    $log[] = "Failed to copy file: " . basename($srcFile);
+                }
+            }
+        }
+        closedir($dir);
+    };
+
+    if (file_exists($targetStorage) && is_dir($targetStorage)) {
+        $copyDir($targetStorage, $publicStorage);
+        $log[] = 'Asset copy process completed.';
+    } else {
+        $log[] = 'Source directory storage/app/public does not exist or is not a directory.';
+    }
+    
     return response()->json($log);
+});
+
+Route::get('/find-files', function () {
+    $results = [];
+    $find = function($dir) use (&$find, &$results) {
+        if (!is_dir($dir)) return;
+        $files = @scandir($dir);
+        if (!$files) return;
+        foreach ($files as $file) {
+            if ($file === '.' || $file === '..') continue;
+            // Skip large vendor, node_modules or storage/framework dirs to avoid memory/time limit
+            if ($file === 'vendor' || $file === 'node_modules' || $file === 'framework' || $file === '.git') continue;
+            $path = $dir . '/' . $file;
+            if (is_dir($path)) {
+                $find($path);
+            } else {
+                if (str_contains($file, 'myshot') || str_contains($file, '.mp4')) {
+                    $results[] = $path;
+                }
+            }
+        }
+    };
+    
+    $find(base_path());
+    
+    return response()->json([
+        'base_path' => base_path(),
+        'found_files' => $results,
+        'public_storage_contents' => is_dir(public_path('storage')) ? @scandir(public_path('storage')) : 'not a dir',
+        'app_public_contents' => is_dir(storage_path('app/public')) ? @scandir(storage_path('app/public')) : 'not a dir',
+    ]);
 });
 
 Route::get('/', function () {
