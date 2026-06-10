@@ -22,4 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
             fn (Request $request) => $request->is('api/*'),
         );
     })->create()
-    ->usePublicPath(dirname(__DIR__) . '/public_html');
+    ->usePublicPath((function () {
+        $publicPath = dirname(__DIR__) . '/public';
+        return is_dir($publicPath) ? $publicPath : dirname(__DIR__);
+    })());

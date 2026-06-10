@@ -16,6 +16,7 @@ export default function Reels() {
     const [commentContent, setCommentContent] = useState('');
     const [commentStatus, setCommentStatus] = useState('');
     const [errorMsg, setErrorMsg] = useState('');
+    const [isMuted, setIsMuted] = useState(true);
     
     // Interactions state
     const [likedStates, setLikedStates] = useState({}); // { reelId: boolean }
@@ -73,6 +74,19 @@ export default function Reels() {
             })
             .catch(err => console.error("Error loading reels:", err))
             .finally(() => setLoading(false));
+    }, []);
+
+    // Global user gesture listener to unmute active video once user interacts with the page
+    useEffect(() => {
+        const handleInteraction = () => {
+            setIsMuted(false);
+        };
+        window.addEventListener('click', handleInteraction, { once: true, passive: true });
+        window.addEventListener('touchstart', handleInteraction, { once: true, passive: true });
+        return () => {
+            window.removeEventListener('click', handleInteraction);
+            window.removeEventListener('touchstart', handleInteraction);
+        };
     }, []);
 
     // Fetch a fresh overlay ad from the backend
@@ -177,7 +191,11 @@ export default function Reels() {
 
             if (index === activeIndex) {
                 // Play active video
-                video.play().catch(err => console.log("Auto-play blocked:", err));
+                video.play().catch(err => {
+                    console.log("Auto-play blocked, playing muted fallback:", err);
+                    video.muted = true;
+                    video.play().catch(playErr => console.error("Muted play failed too:", playErr));
+                });
 
                 // Log view after 2.5 seconds
                 const currentItem = reels[activeIndex];
@@ -475,6 +493,8 @@ export default function Reels() {
                             poster={reel.thumbnail_path}
                             loop
                             playsInline
+                            autoPlay
+                            muted={isMuted}
                             preload={preloadVal}
                             onClick={() => handleVideoClick(index)}
                             style={{ 

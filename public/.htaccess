@@ -2,8 +2,14 @@
     <IfModule mod_negotiation.c>
         Options -MultiViews -Indexes
     </IfModule>
-
     RewriteEngine On
+
+    # Block access to sensitive directories
+    RewriteRule ^(app|bootstrap|config|database|resources|routes|tests|vendor|storage/framework|storage/logs) - [R=404,L]
+
+    # Block access to sensitive files
+    RewriteRule ^(\.env|artisan|composer\.json|composer\.lock|package\.json|package-lock\.json|vite\.config\.js|DB\.txt) - [R=404,L]
+    RewriteRule ^\..* - [R=404,L]
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
