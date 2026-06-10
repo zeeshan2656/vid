@@ -169,7 +169,10 @@ class VideoController extends Controller
      */
     public function stream(Request $request, $filename)
     {
-        $path = storage_path('app/public/videos/' . $filename);
+        $path = public_path('storage/videos/' . $filename);
+        if (!file_exists($path)) {
+            $path = storage_path('app/public/videos/' . $filename);
+        }
 
         if (!file_exists($path)) {
             abort(404, 'Video not found.');

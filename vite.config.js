@@ -8,6 +8,7 @@ export default defineConfig({
         laravel({
             input: ['resources/css/app.css', 'resources/js/app.jsx'],
             refresh: true,
+            publicDirectory: 'public_html',
             fonts: [
                 bunny('Instrument Sans', {
                     // Reduced from 4 weights to 2 — saves ~60KB of font data
