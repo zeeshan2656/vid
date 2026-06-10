@@ -61,7 +61,7 @@ class ReelController extends Controller
         $comments = Cache::remember("reel_comments_{$id}", 10, function () use ($id) {
             return Comment::where('reel_id', $id)
                 ->where('status', 'approved')
-                ->select(['id', 'reel_id', 'author_name', 'content', 'created_at'])
+                ->select(['id', 'reel_id', 'username', 'content', 'created_at'])
                 ->latest()
                 ->get()
                 ->toArray();

@@ -86,7 +86,7 @@ class AdController extends Controller
         if ($request->hasFile('image')) {
             // Delete old image if it exists
             if ($ad->image_path) {
-                $oldPath = str_replace('/storage/', '', $ad->image_path);
+                $oldPath = ltrim(str_replace('/storage/', '', parse_url($ad->image_path, PHP_URL_PATH)), '/');
                 Storage::disk('public')->delete($oldPath);
             }
             $path = $request->file('image')->store('ads', 'public');
@@ -118,7 +118,7 @@ class AdController extends Controller
         $ad = Advertisement::findOrFail($id);
 
         if ($ad->image_path) {
-            $oldPath = str_replace('/storage/', '', $ad->image_path);
+            $oldPath = ltrim(str_replace('/storage/', '', parse_url($ad->image_path, PHP_URL_PATH)), '/');
             Storage::disk('public')->delete($oldPath);
         }
 

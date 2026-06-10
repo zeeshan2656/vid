@@ -33,54 +33,10 @@ class ReelController extends Controller
         return response()->json($reels);
     }
 
-    public function store(Request $request)
-    {
-        $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'video' => 'required|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv|max:512000', // 500MB max
-        ]);
+    // Note: Reel uploads now use the shared chunked upload pipeline
+    // in VideoController (uploadChunk + processUpload with file_type=reel).
+    // The old single-file store method has been removed.
 
-        if ($request->hasFile('video')) {
-            $file = $request->file('video');
-            $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-            $fileName = Str::slug($originalName) . '_' . time() . '.' . $file->getClientOriginalExtension();
-
-            // Store reel file
-            $path = $file->storeAs('reels', $fileName, 'public');
-            $absolutePath = Storage::disk('public')->path($path);
-
-            // Extract metadata
-            $metadata = $this->videoService->getMetadata($absolutePath);
-
-            // Generate thumbnails
-            $outputDirName = 'reel_' . Str::slug($originalName) . '_' . time();
-            $thumbnails = $this->videoService->generateThumbnails($absolutePath, $metadata['duration'], $outputDirName);
-
-            // Create Reel
-            $reel = Reel::create([
-                'title' => $request->title,
-                'description' => $request->description,
-                'video_path' => Storage::url($path),
-                'thumbnail_path' => !empty($thumbnails) ? $thumbnails[0] : null,
-                'duration' => $metadata['duration'],
-                'resolution' => $metadata['resolution'],
-                'orientation' => $metadata['orientation'] ?? 'portrait',
-                'status' => 'published',
-                'published_at' => now(),
-            ]);
-
-            // Clear cache
-            $this->clearCache();
-
-            return response()->json([
-                'message' => 'Reel uploaded and processed successfully',
-                'reel' => $reel
-            ], 201);
-        }
-
-        return response()->json(['error' => 'Video file not provided'], 400);
-    }
 
     public function update(Request $request, $id)
     {
@@ -112,17 +68,11 @@ class ReelController extends Controller
         $reel = Reel::findOrFail($id);
 
         // Delete files
-        $videoPath = str_replace('/storage/', '', $reel->video_path);
+        $videoPath = ltrim(str_replace('/storage/', '', parse_url($reel->video_path, PHP_URL_PATH)), '/');
         Storage::disk('public')->delete($videoPath);
 
         if ($reel->thumbnail_path) {
-            $thumbPath = str_replace('/storage/', '', $reel->thumbnail_path);
-            Storage::disk('public')->delete($thumbPath);
-            
-            $folder = dirname($thumbPath);
-            if ($folder !== '.' && $folder !== 'thumbnails' && Str::startsWith($folder, 'thumbnails/reel_')) {
-                Storage::disk('public')->deleteDirectory($folder);
-            }
+            $this->videoService->deleteThumbnail($reel->thumbnail_path);
         }
 
         $reel->delete();
@@ -147,17 +97,11 @@ class ReelController extends Controller
 
         foreach ($reels as $reel) {
             // Delete files
-            $videoPath = str_replace('/storage/', '', $reel->video_path);
+            $videoPath = ltrim(str_replace('/storage/', '', parse_url($reel->video_path, PHP_URL_PATH)), '/');
             Storage::disk('public')->delete($videoPath);
 
             if ($reel->thumbnail_path) {
-                $thumbPath = str_replace('/storage/', '', $reel->thumbnail_path);
-                Storage::disk('public')->delete($thumbPath);
-                
-                $folder = dirname($thumbPath);
-                if ($folder !== '.' && $folder !== 'thumbnails' && Str::startsWith($folder, 'thumbnails/reel_')) {
-                    Storage::disk('public')->deleteDirectory($folder);
-                }
+                $this->videoService->deleteThumbnail($reel->thumbnail_path);
             }
 
             $reel->delete();

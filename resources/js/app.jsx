@@ -7,8 +7,9 @@ import { UploadProvider } from './components/UploadContext';
 import UploadDashboard from './components/UploadDashboard';
 
 // Configure Axios defaults
-axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
-axios.defaults.withCredentials = true;
+const axiosDefault = axios;
+axiosDefault.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+axiosDefault.defaults.withCredentials = true;
 
 // Lazy load pages — code-split per route
 const Home          = lazy(() => import('./pages/Home'));
@@ -43,25 +44,83 @@ function useIsMobile(breakpoint = 768) {
 /* ─────────────────────────────────────────────────────────
    Header — memo prevents re-render unless isAdmin changes
 ───────────────────────────────────────────────────────── */
-const Header = memo(function Header({ isAdmin, onLogout }) {
+const Header = memo(function Header({ isAdmin, onLogout, showSearch, setShowSearch }) {
     const location = useLocation();
     const isMobile = useIsMobile();
+    const navigate = useNavigate();
 
     if (location.pathname === '/reels') return null;
     if (isMobile && location.pathname.startsWith('/video/')) return null;
+
+    const handleSearchClick = () => {
+        if (location.pathname !== '/') {
+            navigate('/');
+            setShowSearch(true);
+        } else {
+            setShowSearch(prev => !prev);
+        }
+    };
 
     return (
         <header className="app-header">
             <Link to="/" className="nav-logo">
                 <span>⚡</span> FREEHUB LIVE
             </Link>
+
+            {isMobile && (
+                <button 
+                    onClick={handleSearchClick} 
+                    style={{ 
+                        background: 'none', 
+                        border: 'none', 
+                        color: showSearch && location.pathname === '/' ? 'var(--secondary)' : '#fff', 
+                        cursor: 'pointer', 
+                        padding: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginLeft: 'auto',
+                        marginRight: '12px'
+                    }}
+                >
+                    <svg style={{ width: '22px', height: '22px' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </button>
+            )}
+
             <nav className="nav-links desktop-nav">
-                <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}>
+                <Link to="/" className={`nav-link ${location.pathname === '/' && !showSearch ? 'active' : ''}`}>
                     <span className="nav-text">Home</span>
                 </Link>
                 <Link to="/reels" className={`nav-link ${location.pathname === '/reels' ? 'active' : ''}`}>
                     <span className="nav-text">Reels</span>
                 </Link>
+                <button 
+                    onClick={handleSearchClick} 
+                    className={`nav-link ${showSearch && location.pathname === '/' ? 'active' : ''}`}
+                    style={{ 
+                        background: 'none', 
+                        border: 'none', 
+                        cursor: 'pointer', 
+                        display: 'flex', 
+                        alignItems: 'center',
+                        color: 'inherit',
+                        fontFamily: 'inherit',
+                        fontSize: 'inherit',
+                        fontWeight: 'inherit',
+                        padding: 0
+                    }}
+                >
+                    <span className="nav-text" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg style={{ width: '16px', height: '16px' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        Search
+                    </span>
+                </button>
                 {isAdmin ? (
                     <>
                         <Link to="/admin" className="nav-link btn-admin">
@@ -84,9 +143,10 @@ const Header = memo(function Header({ isAdmin, onLogout }) {
 /* ─────────────────────────────────────────────────────────
    Mobile Bottom Nav — memo + shared useIsMobile hook
 ───────────────────────────────────────────────────────── */
-const MobileBottomNav = memo(function MobileBottomNav({ isAdmin, onLogout }) {
+const MobileBottomNav = memo(function MobileBottomNav({ isAdmin, onLogout, showSearch, setShowSearch }) {
     const location = useLocation();
     const isMobile = useIsMobile();
+    const navigate = useNavigate();
 
     if (!isMobile) return null;
 
@@ -95,15 +155,49 @@ const MobileBottomNav = memo(function MobileBottomNav({ isAdmin, onLogout }) {
         return location.pathname.startsWith(path);
     };
 
+    const handleSearchClick = () => {
+        if (location.pathname !== '/') {
+            navigate('/');
+            setShowSearch(true);
+        } else {
+            setShowSearch(prev => !prev);
+        }
+    };
+
     return (
         <nav className="mobile-bottom-nav" id="mobile-bottom-nav">
-            <Link to="/" className={`mobile-nav-item ${isActive('/') ? 'active' : ''}`}>
+            <Link to="/" className={`mobile-nav-item ${isActive('/') && !showSearch ? 'active' : ''}`}>
                 <svg className="mobile-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
                     <polyline points="9 22 9 12 15 12 15 22"></polyline>
                 </svg>
                 <span className="mobile-nav-label">Home</span>
             </Link>
+
+            <button 
+                onClick={handleSearchClick} 
+                className={`mobile-nav-item ${showSearch && location.pathname === '/' ? 'active' : ''}`}
+                style={{ 
+                    background: 'none', 
+                    border: 'none', 
+                    color: 'inherit', 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    padding: '0', 
+                    width: 'auto', 
+                    font: 'inherit' 
+                }}
+            >
+                <svg className="mobile-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <span className="mobile-nav-label">Search</span>
+            </button>
+
             <Link to="/reels" className={`mobile-nav-item ${isActive('/reels') ? 'active' : ''}`}>
                 <svg className="mobile-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
@@ -117,6 +211,7 @@ const MobileBottomNav = memo(function MobileBottomNav({ isAdmin, onLogout }) {
                 </svg>
                 <span className="mobile-nav-label">Reels</span>
             </Link>
+
             {isAdmin ? (
                 <Link to="/admin" className={`mobile-nav-item ${isActive('/admin') ? 'active' : ''}`}>
                     <svg className="mobile-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -134,6 +229,7 @@ const MobileBottomNav = memo(function MobileBottomNav({ isAdmin, onLogout }) {
                     <span className="mobile-nav-label">Login</span>
                 </Link>
             )}
+
             {isAdmin && (
                 <button onClick={onLogout} className="mobile-nav-item">
                     <svg className="mobile-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -167,7 +263,7 @@ const Footer = memo(function Footer() {
         clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => {
             const device = window.innerWidth <= 768 ? 'mobile' : 'desktop';
-            axios.get(`/api/ads/footer?device=${device}`)
+            axiosDefault.get(`/api/ads/footer?device=${device}`)
                 .then(res => setAd(res.data.ad ?? null))
                 .catch(() => {});
         }, 150);
@@ -179,19 +275,19 @@ const Footer = memo(function Footer() {
     useEffect(() => {
         if (ad && ad.id !== impressionLoggedRef.current) {
             impressionLoggedRef.current = ad.id;
-            axios.post(`/api/ads/${ad.id}/impression`).catch(() => {});
+            axiosDefault.post(`/api/ads/${ad.id}/impression`).catch(() => {});
         }
     }, [ad]);
 
-    if (location.pathname === '/reels') return null;
-
     const handleAdClick = useCallback(() => {
         if (!ad) return;
-        axios.post(`/api/ads/${ad.id}/click`).catch(() => {});
+        axiosDefault.post(`/api/ads/${ad.id}/click`).catch(() => {});
         if (ad.redirect_url) {
             window.open(ad.redirect_url, '_blank', 'noopener,noreferrer');
         }
     }, [ad]);
+
+    if (location.pathname === '/reels') return null;
 
     return (
         <div>
@@ -249,9 +345,10 @@ const ScrollToTop = memo(function ScrollToTop() {
 function App() {
     const [isAdmin, setIsAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [showSearch, setShowSearch] = useState(false);
 
     useEffect(() => {
-        axios.get('/api/admin/status')
+        axiosDefault.get('/api/admin/status')
             .then(res => { if (res.data.authenticated) setIsAdmin(true); })
             .catch(() => setIsAdmin(false))
             .finally(() => setLoading(false));
@@ -259,7 +356,7 @@ function App() {
 
     // Stable reference — won't trigger child re-renders
     const handleLogout = useCallback(() => {
-        axios.post('/api/admin/logout').then(() => {
+        axiosDefault.post('/api/admin/logout').then(() => {
             setIsAdmin(false);
             window.location.href = '/';
         });
@@ -280,7 +377,7 @@ function App() {
             <Router>
                 <ScrollToTop />
                 <div className="app-container">
-                    <Header isAdmin={isAdmin} onLogout={handleLogout} />
+                    <Header isAdmin={isAdmin} onLogout={handleLogout} showSearch={showSearch} setShowSearch={setShowSearch} />
                     <div style={{ flex: 1 }}>
                         <Suspense fallback={
                             <div style={{ display: 'flex', height: '80vh', alignItems: 'center', justifyContent: 'center' }}>
@@ -288,7 +385,7 @@ function App() {
                             </div>
                         }>
                             <Routes>
-                                <Route path="/"               element={<Home />} />
+                                <Route path="/"               element={<Home showSearch={showSearch} setShowSearch={setShowSearch} />} />
                                 <Route path="/video/:id"      element={<VideoDetail />} />
                                 <Route path="/reels"          element={<Reels />} />
                                 <Route path="/admin/login"    element={<Login onLogin={handleLogin} />} />
@@ -297,7 +394,7 @@ function App() {
                         </Suspense>
                     </div>
                     <Footer />
-                    <MobileBottomNav isAdmin={isAdmin} onLogout={handleLogout} />
+                    <MobileBottomNav isAdmin={isAdmin} onLogout={handleLogout} showSearch={showSearch} setShowSearch={setShowSearch} />
                     {isAdmin && <UploadDashboard />}
                 </div>
             </Router>

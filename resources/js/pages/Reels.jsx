@@ -385,15 +385,16 @@ export default function Reels() {
         <div style={{ backgroundColor: '#000', height: '100vh', position: 'relative', overflow: 'hidden' }}>
             {/* Top Navigation Overlay replaced with cached advertisement container */}
             <div style={{
-                position: 'absolute', top: '10px', left: '0', right: '0',
-                display: 'flex', justifyContent: 'center', zIndex: 100, pointerEvents: 'none',
+                position: 'absolute', top: '0', left: '0', right: '0',
+                zIndex: 100, pointerEvents: 'none',
                 transform: adVisible ? 'translateY(0)' : 'translateY(-120%)',
                 opacity: adVisible ? 1 : 0,
-                transition: 'transform 0.3s ease-in-out, opacity 0.3s ease-in-out'
+                transition: 'transform 0.3s ease-in-out, opacity 0.3s ease-in-out',
+                width: '100%'
             }}>
-                <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: '15px', maxWidth: '95%' }}>
+                <div style={{ pointerEvents: 'auto', width: '100%' }}>
                     {/* Top Ad container – scrolls away with reel, reloads with fresh data */}
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'rgba(15,15,28,0.45)', backdropFilter: 'blur(10px)', border: '1px solid var(--border-glass)', padding: '4px 12px', borderRadius: '8px', minHeight: '50px', maxWidth: '320px', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', minHeight: '50px', overflow: 'hidden' }}>
                         {topAd ? (
                             <div 
                                 onClick={handleTopAdClick}
@@ -401,9 +402,9 @@ export default function Reels() {
                             >
                                 {topAd.image_path ? (
                                     topAd.media_type === 'video' ? (
-                                        <video key={`ad-video-${adKey}`} src={topAd.image_path} autoPlay muted loop playsInline style={{ maxHeight: '42px', maxWidth: '100%', borderRadius: '4px', objectFit: 'contain' }} />
+                                        <video key={`ad-video-${adKey}`} src={topAd.image_path} autoPlay muted loop playsInline style={{ width: '100%', height: 'auto', maxHeight: '90px', objectFit: 'cover' }} />
                                     ) : (
-                                        <img key={`ad-img-${adKey}`} src={topAd.image_path} alt={topAd.title} style={{ maxHeight: '42px', maxWidth: '100%', borderRadius: '4px', objectFit: 'contain' }} />
+                                        <img key={`ad-img-${adKey}`} src={topAd.image_path} alt={topAd.title} style={{ width: '100%', height: 'auto', maxHeight: '90px', objectFit: 'cover' }} />
                                     )
                                 ) : (
                                     <AdRenderer key={`ad-script-${adKey}`} adCode={topAd.ad_code} />
@@ -473,7 +474,6 @@ export default function Reels() {
                             src={videoSrc}
                             poster={reel.thumbnail_path}
                             loop
-                            muted
                             playsInline
                             preload={preloadVal}
                             onClick={() => handleVideoClick(index)}

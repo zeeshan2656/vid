@@ -18,9 +18,8 @@ class VideoController extends Controller
         'id', 'title', 'thumbnail_path', 'duration', 'resolution', 'views', 'published_at',
     ];
 
-    // Fields returned for the full video detail view
     private const DETAIL_FIELDS = [
-        'id', 'title', 'description', 'video_path', 'thumbnail_path', 'all_thumbnails',
+        'id', 'title', 'description', 'video_path', 'thumbnail_path',
         'duration', 'resolution', 'views', 'status', 'published_at', 'created_at',
     ];
 
@@ -34,14 +33,29 @@ class VideoController extends Controller
         $page   = (int) $request->get('page', 1);
         $device = $request->get('device', 'mobile');
 
-        // Cache only the video listing (lean fields, no description/video_path/all_thumbnails)
-        $videos = Cache::remember("homepage_videos_page_{$page}_v3", 300, function () {
-            return Video::where('status', 'published')
+        $search = $request->get('search');
+
+        if (!empty($search)) {
+            // Retrieve matching videos dynamically
+            $videos = Video::where('status', 'published')
+                ->where(function ($query) use ($search) {
+                    $query->where('title', 'like', "%{$search}%")
+                          ->orWhere('description', 'like', "%{$search}%");
+                })
                 ->select(self::LISTING_FIELDS)
                 ->latest('published_at')
                 ->paginate(20)
                 ->toArray();
-        });
+        } else {
+            // Cache only the video listing (lean fields, no description/video_path/all_thumbnails)
+            $videos = Cache::remember("homepage_videos_page_{$page}_v3", 300, function () {
+                return Video::where('status', 'published')
+                    ->select(self::LISTING_FIELDS)
+                    ->latest('published_at')
+                    ->paginate(20)
+                    ->toArray();
+            });
+        }
 
         $homeTopAd    = $this->adService->getAdForPlacement('home_top', $device);
         $homeMiddleAd = $this->adService->getAdForPlacement('home_middle', $device);
@@ -86,7 +100,7 @@ class VideoController extends Controller
         $comments = Cache::remember("video_comments_{$id}", 10, function () use ($id) {
             return Comment::where('video_id', $id)
                 ->where('status', 'approved')
-                ->select(['id', 'video_id', 'author_name', 'content', 'created_at'])
+                ->select(['id', 'video_id', 'username', 'content', 'created_at'])
                 ->latest()
                 ->get()
                 ->toArray();

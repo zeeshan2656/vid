@@ -38,10 +38,14 @@ Route::prefix('api')->group(function () {
     Route::middleware('auth')->prefix('admin')->group(function () {
         Route::get('/uploads/chunk/status', [AdminVideoController::class, 'getChunkStatus']);
         Route::post('/uploads/chunk', [AdminVideoController::class, 'uploadChunk']);
+        Route::post('/uploads/{uploadUuid}/process', [AdminVideoController::class, 'processUpload']);
+        Route::delete('/uploads/{uploadUuid}/cancel', [AdminVideoController::class, 'cancelUpload']);
 
         Route::post('/videos/bulk-delete', [AdminVideoController::class, 'bulkDestroy']);
         Route::post('/reels/bulk-delete', [AdminReelController::class, 'bulkDestroy']);
 
+        Route::post('/videos/{id}/regenerate-thumbnails', [AdminVideoController::class, 'regenerateThumbnails']);
+        Route::post('/videos/cleanup-temp-thumbnails', [AdminVideoController::class, 'cleanupTempDirectory']);
         Route::apiResource('/videos', AdminVideoController::class)->except(['create', 'edit']);
         Route::apiResource('/reels', AdminReelController::class)->except(['create', 'edit']);
         Route::apiResource('/ads', AdminAdController::class)->except(['create', 'edit']);

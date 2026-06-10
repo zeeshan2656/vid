@@ -12,7 +12,6 @@ class Video extends Model
         'description',
         'video_path',
         'thumbnail_path',
-        'all_thumbnails',
         'duration',
         'resolution',
         'views',
@@ -21,7 +20,6 @@ class Video extends Model
     ];
 
     protected $casts = [
-        'all_thumbnails' => 'array',
         'duration' => 'float',
         'views' => 'integer',
         'published_at' => 'datetime',
